@@ -46,7 +46,7 @@ public:
 	FAlsGeneralMantlingSettings Settings;
 	
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Settings", meta=(Categories = "Als.OverlayMode"))
-	TMap<FGameplayTag, TObjectPtr<UAlsMantlingSettings>> LowMantleSettings;
+	TMap<FGameplayTag, TSoftObjectPtr<UAlsMantlingSettings>> LowMantleSettings;
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Settings")
 	TObjectPtr<UAlsMantlingSettings> HighMantleSettings;

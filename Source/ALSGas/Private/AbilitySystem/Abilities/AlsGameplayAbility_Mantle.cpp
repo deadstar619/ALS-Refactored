@@ -115,7 +115,6 @@ void UAlsGameplayAbility_Mantle::ActivateAbilityWithTargetData(const FGameplayAb
 
 	// Activate task
 	UE_LOG(LogTemp, Warning, TEXT("Mantle data validated, activating task"));
-		
 	UE_LOG(LogTemp, Display, TEXT("Mantle Data for %s: %s"), bIsServer ? TEXT("server") : TEXT("client"), *MantleTargetData->ToString());
 	
 	UAlsMantlingSettings* LocMantlingSettings = SelectMantlingSettings(MantleTargetData->MantlingType);
@@ -433,7 +432,8 @@ UAlsMantlingSettings* UAlsGameplayAbility_Mantle::SelectMantlingSettings_Impleme
 		{
 			if (LowMantleSettings.Find(AlsCharacter->GetOverlayMode()) && AlsCharacter->GetOverlayMode().IsValid())
 			{
-				return LowMantleSettings[AlsCharacter->GetOverlayMode()];
+				if (LowMantleSettings[AlsCharacter->GetOverlayMode()].LoadSynchronous())
+				return LowMantleSettings[AlsCharacter->GetOverlayMode()].Get();
 			}
 			return nullptr;
 		}

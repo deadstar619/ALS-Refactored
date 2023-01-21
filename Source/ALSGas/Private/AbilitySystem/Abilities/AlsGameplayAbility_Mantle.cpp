@@ -4,10 +4,13 @@
 #include "AbilitySystem/Abilities/AlsGameplayAbility_Mantle.h"
 
 #include "AlsCharacter.h"
+#include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "AbilitySystem/ALSGameplayAbilityTargetTypes.h"
+#include "AbilitySystem/AbilityTasks/AlsAbilityTask_Mantle.h"
 #include "Components/CapsuleComponent.h"
 #include "GameFramework/CharacterMovementComponent.h"
 #include "Utility/AlsConstants.h"
+#include "Utility/AlsMacros.h"
 #include "Utility/AlsMath.h"
 #include "Utility/AlsUtility.h"
 
@@ -30,7 +33,7 @@ void UAlsGameplayAbility_Mantle::ActivateLocalPlayerAbility(const FGameplayAbili
 	}
 	
 	FAlsMantlingParameters MantlingParameters;
-	if (MakeMantlingTargetData(MantlingParameters))
+	if (MakeMantlingParams(MantlingParameters))
 	{
 		// Make the target data and send it to the server
 		FGameplayAbilityTargetDataHandle TargetDataHandle;
@@ -54,9 +57,6 @@ void UAlsGameplayAbility_Mantle::ActivateLocalPlayerAbility(const FGameplayAbili
 
 void UAlsGameplayAbility_Mantle::ActivateAbilityWithTargetData(const FGameplayAbilityTargetDataHandle& TargetDataHandle, FGameplayTag ApplicationTag)
 {
-	const bool bIsServer = CurrentActorInfo->IsNetAuthority();
-	bool bCanStartMantle = false;
-
 	// retrieve data
 	const FGameplayAbilityTargetData* TargetData = TargetDataHandle.Get(0);
 	if (!TargetData)
@@ -71,6 +71,7 @@ void UAlsGameplayAbility_Mantle::ActivateAbilityWithTargetData(const FGameplayAb
 	check(MantleTargetData);
 
 	// Server: Validate data
+	const bool bIsServer = CurrentActorInfo->IsNetAuthority();
 	if (bIsServer)
 	{
 		if (!MantleTargetData->IsValid())
@@ -81,10 +82,10 @@ void UAlsGameplayAbility_Mantle::ActivateAbilityWithTargetData(const FGameplayAb
 
 		// Do the check on the server to make sure the mantle is valid
 		FAlsMantlingParameters MantlingParameters;
-		if (MakeMantlingTargetData(MantlingParameters))
+		if (MakeMantlingParams(MantlingParameters))
 		{
 			constexpr float ClientServerTollerance = 5.0f;
-			
+						
 			const bool bTargetPrimitiveMatch = MantleTargetData->TargetPrimitive == MantlingParameters.TargetPrimitive;
 			const bool bTargetRelativeLocationMatch = MantleTargetData->TargetRelativeLocation.Equals(MantlingParameters.TargetRelativeLocation, ClientServerTollerance);
 			const bool bTargetRelativeRotationMatch = MantleTargetData->TargetRelativeRotation.Equals(MantlingParameters.TargetRelativeRotation, ClientServerTollerance);
@@ -98,7 +99,7 @@ void UAlsGameplayAbility_Mantle::ActivateAbilityWithTargetData(const FGameplayAb
 			UE_LOG(LogTemp, Warning, TEXT("MantlingType mismatch: %d vs %d"), MantleTargetData->MantlingType, MantlingParameters.MantlingType);
 
 			// Check if all the values match			
-			bCanStartMantle = bTargetPrimitiveMatch && bTargetRelativeLocationMatch && bTargetRelativeRotationMatch && bMantlingHeightMatch && bMantlingTypeMatch;
+			const bool bCanStartMantle = bTargetPrimitiveMatch && bTargetRelativeLocationMatch && bTargetRelativeRotationMatch && bMantlingHeightMatch && bMantlingTypeMatch;
 
 			if(!bCanStartMantle)
 			{
@@ -112,16 +113,72 @@ void UAlsGameplayAbility_Mantle::ActivateAbilityWithTargetData(const FGameplayAb
 	// Client & Server both -- data is valid, activate the ability with it
 	//////////////////////////////////////////////////////////////////////
 
-	if (bCanStartMantle)
+	// Activate task
+	UE_LOG(LogTemp, Warning, TEXT("Mantle data validated, activating task"));
+		
+	UE_LOG(LogTemp, Display, TEXT("Mantle Data for %s: %s"), bIsServer ? TEXT("server") : TEXT("client"), *MantleTargetData->ToString());
+
+	
+	/*if (AlsCharacter->GetLocalRole() >= ROLE_Authority)
 	{
-		// Activate task
-		UE_LOG(LogTemp, Warning, TEXT("Mantle data validated, activating task"));
-		UE_LOG(LogTemp, Display, TEXT("Mantle Data: %s"), *MantleTargetData->ToString());
-		return;
+		AlsCharacter->MulticastStartMantling(Parameters);
 	}
+	else
+	{
+		AlsCharacter->GetCharacterMovement()->FlushServerMoves();
+
+		AlsCharacter->StartMantlingImplementation(Parameters);
+		AlsCharacter->ServerStartMantling(Parameters);
+	}*/
+
+	// Spawn and activate the AlsAbilityTask_Mantle
+
+	UAlsMantlingSettings* LocMantlingSettings = SelectMantlingSettings(MantleTargetData->MantlingType);
+	check(LocMantlingSettings);
+
+	UAlsAbilityTask_Mantle* Task = UAlsAbilityTask_Mantle::Mantle(this, "MantleTask", MantleTargetData->GetMantlingParameters(), LocMantlingSettings);
+	Task->OnMantleStarted.AddDynamic(this, &UAlsGameplayAbility_Mantle::OnMantleStart);
+	Task->OnMantleCompleted.AddDynamic(this, &UAlsGameplayAbility_Mantle::OnMantleEnd);
+	Task->ReadyForActivation();
 }
 
-bool UAlsGameplayAbility_Mantle::MakeMantlingTargetData(FAlsMantlingParameters& OutMantlingParams)
+void UAlsGameplayAbility_Mantle::OnMantleStart(const FAlsMantlingParameters& MantlingParameters, const UAlsMantlingSettings* MantlingSettings)
+{
+	// We get the settings for the montage then we spawn the montage task
+	
+	if (ALS_ENSURE(IsValid(MantlingSettings->Montage)))
+	{
+		const auto StartTime{MantlingSettings->CalculateStartTime(MantlingParameters.MantlingHeight)};
+		const auto PlayRate{MantlingSettings->CalculatePlayRate(MantlingParameters.MantlingHeight)};
+		
+		// TODO Magic. I can't explain why, but this code fixes animation and root motion source desynchronization.
+
+		const auto MontageStartTime{
+			MantlingParameters.MantlingType == EAlsMantlingType::InAir && IsLocallyControlled()
+				? StartTime - FMath::GetMappedRangeValueClamped(
+					  FVector2f{MantlingSettings->ReferenceHeight}, {GetWorld()->GetDeltaSeconds(), 0.0f}, MantlingParameters.MantlingHeight)
+				: StartTime
+		};
+
+		// Spawn and activate the AbilityTask_PlayMontageAndWaitForEvent
+		UAbilityTask_PlayMontageAndWait* Task = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, "MontageTask",
+			MantlingSettings->Montage, PlayRate,NAME_None, true, 1, MontageStartTime);
+
+		Task->ReadyForActivation();
+		
+		AlsCharacter->SetLocomotionAction(AlsLocomotionActionTags::Mantling);
+	}
+
+	K2_OnMantleStart(MantlingParameters, MantlingSettings);
+}
+
+void UAlsGameplayAbility_Mantle::OnMantleEnd(const FAlsMantlingParameters& MantlingParameters, const UAlsMantlingSettings* MantlingSettings)
+{
+	K2_OnMantleEnd(MantlingParameters, MantlingSettings);
+	EndAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, false, false);
+}
+
+bool UAlsGameplayAbility_Mantle::MakeMantlingParams(FAlsMantlingParameters& OutMantlingParams)
 {
 	if (!AlsCharacter.IsValid())
 	{
@@ -362,17 +419,26 @@ bool UAlsGameplayAbility_Mantle::MakeMantlingTargetData(FAlsMantlingParameters& 
 	// We finally have our data.
 	OutMantlingParams = Parameters;
 
-	/*if (AlsCharacter->GetLocalRole() >= ROLE_Authority)
-	{
-		AlsCharacter->MulticastStartMantling(Parameters);
-	}
-	else
-	{
-		AlsCharacter->GetCharacterMovement()->FlushServerMoves();
-
-		AlsCharacter->StartMantlingImplementation(Parameters);
-		AlsCharacter->ServerStartMantling(Parameters);
-	}*/
-
 	return true;
+}
+
+UAlsMantlingSettings* UAlsGameplayAbility_Mantle::SelectMantlingSettings_Implementation(EAlsMantlingType MantlingType)
+{
+	// Select the appropriate mantling settings based on the mantling type.
+	if (!AlsCharacter.IsValid())
+	{
+		return nullptr;
+	}
+
+	switch (MantlingType)
+	{
+	case EAlsMantlingType::Low:
+		return *LowMantleSettings.Find(AlsCharacter->GetOverlayMode());
+	case EAlsMantlingType::High:
+		return HighMantleSettings;
+	case EAlsMantlingType::InAir:
+		return InAirMantleSettings;
+	default:
+		return nullptr;
+	}
 }

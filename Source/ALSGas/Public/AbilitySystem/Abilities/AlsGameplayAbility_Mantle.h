@@ -17,15 +17,41 @@ class ALSGAS_API UAlsGameplayAbility_Mantle : public UAlsGameplayAbility_Base
 {
 	GENERATED_BODY()
 
-protected:	
+protected:
 	virtual void ActivateLocalPlayerAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData) override;
+
 	virtual void ActivateAbilityWithTargetData(const FGameplayAbilityTargetDataHandle& TargetDataHandle, FGameplayTag ApplicationTag) override;
-	
-	bool MakeMantlingTargetData(FAlsMantlingParameters& OutMantlingParams);
+
+	virtual bool MakeMantlingParams(FAlsMantlingParameters& OutMantlingParams);
+
+	UFUNCTION(BlueprintImplementableEvent, Category = "Events|Mantling", meta = (DisplayName = "OnMantleStart"))
+	void K2_OnMantleStart(const FAlsMantlingParameters& MantlingParams, const UAlsMantlingSettings* MantlingSettings);
+
+	UFUNCTION(BlueprintImplementableEvent, Category = "Events|Mantling", meta = (DisplayName = "OnMantleEnd"))
+	void K2_OnMantleEnd(const FAlsMantlingParameters& MantlingParams, const UAlsMantlingSettings* MantlingSettings);
+
+protected:
+	UFUNCTION(BlueprintNativeEvent, Category = "Als Character")
+	UAlsMantlingSettings* SelectMantlingSettings(EAlsMantlingType MantlingType);
+
+	UFUNCTION()
+	void OnMantleStart(const FAlsMantlingParameters& MantlingParameters, const UAlsMantlingSettings* MantlingSettings);
+
+	UFUNCTION()
+	void OnMantleEnd(const FAlsMantlingParameters& MantlingParameters, const UAlsMantlingSettings* MantlingSettings);
 
 public:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Settings")
 	FAlsGeneralMantlingSettings Settings;
+	
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Settings", meta=(Categories = "Als.OverlayMode"))
+	TMap<FGameplayTag, TObjectPtr<UAlsMantlingSettings>> LowMantleSettings;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Settings")
+	TObjectPtr<UAlsMantlingSettings> HighMantleSettings;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Settings")
+	TObjectPtr<UAlsMantlingSettings> InAirMantleSettings;
 
 private:
 	UPROPERTY(Transient)

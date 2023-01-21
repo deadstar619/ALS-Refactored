@@ -5,6 +5,7 @@
 
 #include "AlsCharacter.h"
 #include "AlsCharacterMovementComponent.h"
+#include "Abilities/Tasks/AbilityTask_PlayMontageAndWait.h"
 #include "Curves/CurveVector.h"
 #include "GameFramework/Character.h"
 #include "Net/UnrealNetwork.h"
@@ -12,11 +13,10 @@
 #include "Utility/AlsMacros.h"
 
 UAlsAbilityTask_Mantle::UAlsAbilityTask_Mantle(const FObjectInitializer& ObjectInitializer)
-	: Super(ObjectInitializer), Settings(nullptr), MantlingRootMotionSourceId(0)
+	: Super(ObjectInitializer), AlsCharacter(nullptr), Settings(nullptr), MantlingRootMotionSourceId(0)
 {
 	bTickingTask = true;
 	bSimulatedTask = true;
-	bIsFinished = false;
 }
 
 void UAlsAbilityTask_Mantle::InitSimulatedTask(UGameplayTasksComponent& InGameplayTasksComponent)
@@ -27,7 +27,6 @@ void UAlsAbilityTask_Mantle::InitSimulatedTask(UGameplayTasksComponent& InGamepl
 void UAlsAbilityTask_Mantle::GetLifetimeReplicatedProps(TArray< FLifetimeProperty > & OutLifetimeProps) const
 {
 	DOREPLIFETIME(ThisClass, Parameters);
-	DOREPLIFETIME(ThisClass, Settings);
 }
 
 UAlsAbilityTask_Mantle* UAlsAbilityTask_Mantle::Mantle(UGameplayAbility* OwningAbility, FName TaskInstanceName, const FAlsMantlingParameters& Parameters, UAlsMantlingSettings* Settings)
@@ -44,27 +43,37 @@ UAlsAbilityTask_Mantle* UAlsAbilityTask_Mantle::Mantle(UGameplayAbility* OwningA
 	return MyObj;
 }
 
+void UAlsAbilityTask_Mantle::TickTask(float DeltaTime)
+{
+	Super::TickTask(DeltaTime);
+	
+	RefreshMantling();
+}
+
 void UAlsAbilityTask_Mantle::Activate()
 {
 	AActor* MyActor = GetAvatarActor();
-	if (MyActor)
+	if (!IsValid(MyActor))
 	{
+		EndTask();
 		return;
 	}
 
-	AAlsCharacter* AlsCharacter = Cast<AAlsCharacter>(MyActor);
-	if (AlsCharacter)
+	AlsCharacter = Cast<AAlsCharacter>(MyActor);
+	if (!AlsCharacter.IsValid())
 	{
+		EndTask();
 		return;
 	}
 	
 	UAlsCharacterMovementComponent* CharMoveComp = Cast<UAlsCharacterMovementComponent>(AlsCharacter->GetMovementComponent());
-	if (CharMoveComp)
+	if (!CharMoveComp)
 	{
+		EndTask();
 		return;
 	}
-	// SelectMantling Settings will be in the ability
-//	auto* MantlingSettings{SelectMantlingSettings(Parameters.MantlingType)};
+	
+	// SelectMantling Settings comes from the ability now
 
 	if (!ALS_ENSURE(IsValid(Settings.Get())) ||
 	    !ALS_ENSURE(IsValid(Settings->BlendInCurve)) ||
@@ -127,7 +136,7 @@ void UAlsAbilityTask_Mantle::Activate()
 
 	MantlingRootMotionSourceId = CharMoveComp->ApplyRootMotionSource(Mantling);
 
-	// Play the animation montage if valid.
+	// Play the animation montage if valid.	
 
 	if (ALS_ENSURE(IsValid(Settings->Montage)))
 	{
@@ -148,15 +157,70 @@ void UAlsAbilityTask_Mantle::Activate()
 		}
 	}
 
-	OnMantleStarted.Broadcast(Parameters);
+	OnMantleStarted.Broadcast(Parameters, Settings.Get());
 }
 
-void UAlsAbilityTask_Mantle::TickTask(float DeltaTime)
+void UAlsAbilityTask_Mantle::StopMantling()
 {
-	Super::TickTask(DeltaTime);
+	if (MantlingRootMotionSourceId <= 0)
+	{
+		return;
+	}
+
+	const auto RootMotionSource{AlsCharacter->GetCharacterMovement()->GetRootMotionSourceByID(MantlingRootMotionSourceId)};
+
+	if (RootMotionSource.IsValid() &&
+		!RootMotionSource->Status.HasFlag(ERootMotionSourceStatusFlags::Finished) &&
+		!RootMotionSource->Status.HasFlag(ERootMotionSourceStatusFlags::MarkedForRemoval))
+	{
+		RootMotionSource->Status.SetFlag(ERootMotionSourceStatusFlags::MarkedForRemoval);
+	}
+
+	MantlingRootMotionSourceId = 0;
+
+	if (AlsCharacter->GetLocalRole() >= ROLE_Authority)
+	{
+		AlsCharacter->GetCharacterMovement()->NetworkSmoothingMode = ENetworkSmoothingMode::Exponential;
+	}
+
+	UAlsCharacterMovementComponent* CharMoveComp = Cast<UAlsCharacterMovementComponent>(AlsCharacter->GetMovementComponent());
+	ensure(CharMoveComp);
+	CharMoveComp->SetMovementModeLocked(false);
+	CharMoveComp->SetMovementMode(MOVE_Walking);
+
+	OnMantleCompleted.Broadcast(Parameters, Settings.Get());
+	EndTask();
 }
 
 void UAlsAbilityTask_Mantle::OnDestroy(bool AbilityIsEnding)
 {
 	Super::OnDestroy(AbilityIsEnding);
+}
+
+void UAlsAbilityTask_Mantle::RefreshMantling()
+{
+	if (!AlsCharacter.IsValid())
+	{
+		EndTask();
+		return;
+	}
+
+	if (MantlingRootMotionSourceId <= 0)
+	{
+		EndTask();
+		return;
+	}
+
+	const auto RootMotionSource{AlsCharacter->GetCharacterMovement()->GetRootMotionSourceByID(MantlingRootMotionSourceId)};
+
+	if (!RootMotionSource.IsValid() ||
+		RootMotionSource->Status.HasFlag(ERootMotionSourceStatusFlags::Finished) ||
+		RootMotionSource->Status.HasFlag(ERootMotionSourceStatusFlags::MarkedForRemoval) ||
+		// ReSharper disable once CppRedundantParentheses
+		(AlsCharacter->GetLocomotionAction().IsValid() && AlsCharacter->GetLocomotionAction() != AlsLocomotionActionTags::Mantling) ||
+		AlsCharacter->GetCharacterMovement()->MovementMode != MOVE_Custom)
+	{
+		StopMantling();
+		AlsCharacter->ForceNetUpdate();
+	}
 }

@@ -36,6 +36,11 @@ struct  FALSGameplayAbilityTargetData_Mantle : public FGameplayAbilityTargetData
 		return TargetPrimitive.IsValid();
 	}
 
+	FAlsMantlingParameters GetMantlingParameters() const
+	{
+		return FAlsMantlingParameters{TargetPrimitive.Get(), TargetRelativeLocation, TargetRelativeRotation, MantlingHeight, MantlingType};
+	}
+
 	// Serialized for replication
 	bool NetSerialize(FArchive& Ar, class UPackageMap* Map, bool& bOutSuccess);
 

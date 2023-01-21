@@ -8,6 +8,7 @@
 #include "AlsGameplayAbility_Mantle.generated.h"
 
 class AAlsCharacter;
+class UAbilityTask_PlayMontageAndWait;
 
 /**
  * 
@@ -17,23 +18,23 @@ class ALSGAS_API UAlsGameplayAbility_Mantle : public UAlsGameplayAbility_Base
 {
 	GENERATED_BODY()
 
+public:
+	UFUNCTION(BlueprintImplementableEvent, Category = "Events|Mantling", meta = (DisplayName = "OnMantleStart"))
+	void K2_OnMantleStart(const FAlsMantlingParameters& MantlingParams, const UAlsMantlingSettings* MantlingSettings);
+
+	UFUNCTION(BlueprintImplementableEvent, Category = "Events|Mantling", meta = (DisplayName = "OnMantleEnd"))
+	void K2_OnMantleEnd(const FAlsMantlingParameters& MantlingParams, const UAlsMantlingSettings* MantlingSettings);
+	
+	UFUNCTION(BlueprintNativeEvent, Category = "Als Character")
+	UAlsMantlingSettings* SelectMantlingSettings(EAlsMantlingType MantlingType);
+	
 protected:
 	virtual void ActivateLocalPlayerAbility(const FGameplayAbilitySpecHandle Handle, const FGameplayAbilityActorInfo* ActorInfo, const FGameplayAbilityActivationInfo ActivationInfo, const FGameplayEventData* TriggerEventData) override;
 
 	virtual void ActivateAbilityWithTargetData(const FGameplayAbilityTargetDataHandle& TargetDataHandle, FGameplayTag ApplicationTag) override;
 
 	virtual bool MakeMantlingParams(FAlsMantlingParameters& OutMantlingParams);
-
-	UFUNCTION(BlueprintImplementableEvent, Category = "Events|Mantling", meta = (DisplayName = "OnMantleStart"))
-	void K2_OnMantleStart(const FAlsMantlingParameters& MantlingParams, const UAlsMantlingSettings* MantlingSettings);
-
-	UFUNCTION(BlueprintImplementableEvent, Category = "Events|Mantling", meta = (DisplayName = "OnMantleEnd"))
-	void K2_OnMantleEnd(const FAlsMantlingParameters& MantlingParams, const UAlsMantlingSettings* MantlingSettings);
-
-protected:
-	UFUNCTION(BlueprintNativeEvent, Category = "Als Character")
-	UAlsMantlingSettings* SelectMantlingSettings(EAlsMantlingType MantlingType);
-
+	
 	UFUNCTION()
 	void OnMantleStart(const FAlsMantlingParameters& MantlingParameters, const UAlsMantlingSettings* MantlingSettings);
 

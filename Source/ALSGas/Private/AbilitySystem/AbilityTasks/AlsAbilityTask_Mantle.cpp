@@ -16,22 +16,21 @@ UAlsAbilityTask_Mantle::UAlsAbilityTask_Mantle(const FObjectInitializer& ObjectI
 	: Super(ObjectInitializer), AlsCharacter(nullptr), Settings(nullptr), MantlingRootMotionSourceId(0)
 {
 	bTickingTask = true;
-	bSimulatedTask = true;
+	bSimulatedTask = false;
 }
 
-void UAlsAbilityTask_Mantle::InitSimulatedTask(UGameplayTasksComponent& InGameplayTasksComponent)
-{
-	Super::InitSimulatedTask(InGameplayTasksComponent);
-}
-
+/*
 void UAlsAbilityTask_Mantle::GetLifetimeReplicatedProps(TArray< FLifetimeProperty > & OutLifetimeProps) const
 {
+	Super::GetLifetimeReplicatedProps(OutLifetimeProps);
+	
 	DOREPLIFETIME(ThisClass, Parameters);
 }
+*/
 
 UAlsAbilityTask_Mantle* UAlsAbilityTask_Mantle::Mantle(UGameplayAbility* OwningAbility, FName TaskInstanceName, const FAlsMantlingParameters& Parameters, UAlsMantlingSettings* Settings)
 {
-	if (!IsValid(Settings))
+	if (!IsValid(Settings) || !IsValid(OwningAbility) || !IsValid(OwningAbility->GetAvatarActorFromActorInfo()))
 	{
 		return nullptr;
 	}
@@ -52,14 +51,7 @@ void UAlsAbilityTask_Mantle::TickTask(float DeltaTime)
 
 void UAlsAbilityTask_Mantle::Activate()
 {
-	AActor* MyActor = GetAvatarActor();
-	if (!IsValid(MyActor))
-	{
-		EndTask();
-		return;
-	}
-
-	AlsCharacter = Cast<AAlsCharacter>(MyActor);
+	AlsCharacter = Cast<AAlsCharacter>(GetAvatarActor());
 	if (!AlsCharacter.IsValid())
 	{
 		EndTask();
@@ -122,7 +114,6 @@ void UAlsAbilityTask_Mantle::Activate()
 	}
 
 	// Apply mantling root motion.
-
 	const auto Mantling{MakeShared<FAlsRootMotionSource_Mantling>()};
 	Mantling->InstanceName = ANSI_TO_TCHAR(__FUNCTION__);
 	Mantling->Duration = Duration / PlayRate;
@@ -136,27 +127,11 @@ void UAlsAbilityTask_Mantle::Activate()
 
 	MantlingRootMotionSourceId = CharMoveComp->ApplyRootMotionSource(Mantling);
 
-	// Play the animation montage if valid.	
-
-	if (ALS_ENSURE(IsValid(Settings->Montage)))
+	if (Ability)
 	{
-		// TODO Magic. I can't explain why, but this code fixes animation and root motion source desynchronization.
-
-		const auto MontageStartTime{
-			Parameters.MantlingType == EAlsMantlingType::InAir && IsLocallyControlled()
-				? StartTime - FMath::GetMappedRangeValueClamped(
-					  FVector2f{Settings->ReferenceHeight}, {GetWorld()->GetDeltaSeconds(), 0.0f}, Parameters.MantlingHeight)
-				: StartTime
-		};
-
-		if (AlsCharacter->GetMesh()->GetAnimInstance()->Montage_Play(Settings->Montage, PlayRate,
-		                                               EMontagePlayReturnType::MontageLength,
-		                                               MontageStartTime, false))
-		{
-			AlsCharacter->SetLocomotionAction(AlsLocomotionActionTags::Mantling);
-		}
+		Ability->SetMovementSyncPoint(Mantling->InstanceName);
 	}
-
+	
 	OnMantleStarted.Broadcast(Parameters, Settings.Get());
 }
 
@@ -194,6 +169,8 @@ void UAlsAbilityTask_Mantle::StopMantling()
 
 void UAlsAbilityTask_Mantle::OnDestroy(bool AbilityIsEnding)
 {
+	StopMantling();
+	
 	Super::OnDestroy(AbilityIsEnding);
 }
 

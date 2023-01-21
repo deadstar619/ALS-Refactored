@@ -30,7 +30,7 @@ class ALSGAS_API UAlsAbilityTask_Mantle : public UAbilityTask
 	virtual void Activate() override;
 	virtual void TickTask(float DeltaTime) override;
 	virtual void OnDestroy(bool AbilityIsEnding) override;
-	virtual void InitSimulatedTask(UGameplayTasksComponent& InGameplayTasksComponent) override;
+	/*virtual void InitSimulatedTask(UGameplayTasksComponent& InGameplayTasksComponent) override;*/
 	// ~ End UAbilityTask Interface
 	
 private:
@@ -41,7 +41,7 @@ protected:
 	UPROPERTY(Transient)
 	TWeakObjectPtr<AAlsCharacter> AlsCharacter;
 
-	UPROPERTY(Replicated, Transient)
+	UPROPERTY(Transient /*Replicated*/)
 	FAlsMantlingParameters Parameters;
 	
 	UPROPERTY(Transient)

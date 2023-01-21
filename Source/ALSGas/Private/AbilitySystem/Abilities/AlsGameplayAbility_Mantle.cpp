@@ -84,7 +84,7 @@ void UAlsGameplayAbility_Mantle::ActivateAbilityWithTargetData(const FGameplayAb
 		FAlsMantlingParameters MantlingParameters;
 		if (MakeMantlingParams(MantlingParameters))
 		{
-			constexpr float ClientServerTollerance = 5.0f;
+			constexpr float ClientServerTollerance = 0.01f;
 						
 			const bool bTargetPrimitiveMatch = MantleTargetData->TargetPrimitive == MantlingParameters.TargetPrimitive;
 			const bool bTargetRelativeLocationMatch = MantleTargetData->TargetRelativeLocation.Equals(MantlingParameters.TargetRelativeLocation, ClientServerTollerance);
@@ -117,58 +117,55 @@ void UAlsGameplayAbility_Mantle::ActivateAbilityWithTargetData(const FGameplayAb
 	UE_LOG(LogTemp, Warning, TEXT("Mantle data validated, activating task"));
 		
 	UE_LOG(LogTemp, Display, TEXT("Mantle Data for %s: %s"), bIsServer ? TEXT("server") : TEXT("client"), *MantleTargetData->ToString());
-
 	
-	/*if (AlsCharacter->GetLocalRole() >= ROLE_Authority)
+	UAlsMantlingSettings* LocMantlingSettings = SelectMantlingSettings(MantleTargetData->MantlingType);
+	if (!LocMantlingSettings)
 	{
-		AlsCharacter->MulticastStartMantling(Parameters);
+		UE_LOG(LogTemp, Warning, TEXT("Ability %s could not find a valid MantlingSettings for MantlingType %d."), *GetName(), MantleTargetData->MantlingType);
+		CancelAbility(CurrentSpecHandle, CurrentActorInfo, CurrentActivationInfo, true);
+		return;
 	}
-	else
+
+	if (AlsCharacter->GetLocalRole() < ROLE_Authority)
 	{
 		AlsCharacter->GetCharacterMovement()->FlushServerMoves();
-
-		AlsCharacter->StartMantlingImplementation(Parameters);
-		AlsCharacter->ServerStartMantling(Parameters);
-	}*/
-
-	// Spawn and activate the AlsAbilityTask_Mantle
-
-	UAlsMantlingSettings* LocMantlingSettings = SelectMantlingSettings(MantleTargetData->MantlingType);
-	check(LocMantlingSettings);
-
+	}
+	
 	UAlsAbilityTask_Mantle* Task = UAlsAbilityTask_Mantle::Mantle(this, "MantleTask", MantleTargetData->GetMantlingParameters(), LocMantlingSettings);
 	Task->OnMantleStarted.AddDynamic(this, &UAlsGameplayAbility_Mantle::OnMantleStart);
 	Task->OnMantleCompleted.AddDynamic(this, &UAlsGameplayAbility_Mantle::OnMantleEnd);
-	Task->ReadyForActivation();
-}
-
-void UAlsGameplayAbility_Mantle::OnMantleStart(const FAlsMantlingParameters& MantlingParameters, const UAlsMantlingSettings* MantlingSettings)
-{
-	// We get the settings for the montage then we spawn the montage task
 	
-	if (ALS_ENSURE(IsValid(MantlingSettings->Montage)))
+	UAbilityTask_PlayMontageAndWait* MontageTask = nullptr;
+	
+	if (ALS_ENSURE(IsValid(LocMantlingSettings->Montage)))
 	{
-		const auto StartTime{MantlingSettings->CalculateStartTime(MantlingParameters.MantlingHeight)};
-		const auto PlayRate{MantlingSettings->CalculatePlayRate(MantlingParameters.MantlingHeight)};
-		
-		// TODO Magic. I can't explain why, but this code fixes animation and root motion source desynchronization.
+		const auto StartTime{LocMantlingSettings->CalculateStartTime(MantleTargetData->GetMantlingParameters().MantlingHeight)};
+		const auto PlayRate{LocMantlingSettings->CalculatePlayRate(MantleTargetData->GetMantlingParameters().MantlingHeight)};
 
 		const auto MontageStartTime{
-			MantlingParameters.MantlingType == EAlsMantlingType::InAir && IsLocallyControlled()
+			MantleTargetData->GetMantlingParameters().MantlingType == EAlsMantlingType::InAir && IsLocallyControlled()
 				? StartTime - FMath::GetMappedRangeValueClamped(
-					  FVector2f{MantlingSettings->ReferenceHeight}, {GetWorld()->GetDeltaSeconds(), 0.0f}, MantlingParameters.MantlingHeight)
+					  FVector2f{LocMantlingSettings->ReferenceHeight}, {GetWorld()->GetDeltaSeconds(), 0.0f}, MantleTargetData->GetMantlingParameters().MantlingHeight)
 				: StartTime
 		};
-
+		
 		// Spawn and activate the AbilityTask_PlayMontageAndWaitForEvent
-		UAbilityTask_PlayMontageAndWait* Task = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, "MontageTask",
-			MantlingSettings->Montage, PlayRate,NAME_None, true, 1, MontageStartTime);
-
-		Task->ReadyForActivation();
+		MontageTask = UAbilityTask_PlayMontageAndWait::CreatePlayMontageAndWaitProxy(this, "MontageTask",
+			LocMantlingSettings->Montage, PlayRate,NAME_None, true, 1, MontageStartTime);
 		
 		AlsCharacter->SetLocomotionAction(AlsLocomotionActionTags::Mantling);
 	}
 
+	Task->ReadyForActivation();
+	
+	if (IsValid(MontageTask))
+	{
+		MontageTask->ReadyForActivation();
+	}
+}
+
+void UAlsGameplayAbility_Mantle::OnMantleStart(const FAlsMantlingParameters& MantlingParameters, const UAlsMantlingSettings* MantlingSettings)
+{	
 	K2_OnMantleStart(MantlingParameters, MantlingSettings);
 }
 
@@ -433,7 +430,13 @@ UAlsMantlingSettings* UAlsGameplayAbility_Mantle::SelectMantlingSettings_Impleme
 	switch (MantlingType)
 	{
 	case EAlsMantlingType::Low:
-		return *LowMantleSettings.Find(AlsCharacter->GetOverlayMode());
+		{
+			if (LowMantleSettings.Find(AlsCharacter->GetOverlayMode()) && AlsCharacter->GetOverlayMode().IsValid())
+			{
+				return LowMantleSettings[AlsCharacter->GetOverlayMode()];
+			}
+			return nullptr;
+		}
 	case EAlsMantlingType::High:
 		return HighMantleSettings;
 	case EAlsMantlingType::InAir:
